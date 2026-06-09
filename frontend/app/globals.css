@@ -1,1 +1,98 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-inter: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Primary Brand */
+  --color-primary: #5B3DF5;
+  --color-primary-indigo: #4F46E5;
+  --color-accent-violet: #6D5EF7;
+  --color-primary-hover: #7C6CFF;
+
+  /* Sidebar - stays dark in both modes */
+  --color-sidebar: #0B1020;
+  --color-sidebar-secondary: #111827;
+  --color-sidebar-hover: #1A2236;
+  --color-sidebar-border: rgba(255, 255, 255, 0.06);
+  --color-sidebar-text: #8B909A;
+  --color-sidebar-text-active: #FFFFFF;
+
+  /* Main Backgrounds - light */
+  --color-surface: #F5F7FB;
+  --color-card: #FFFFFF;
+  --color-secondary-surface: #FAFBFD;
+  --color-input: #F9FAFC;
+
+  /* Text - light */
+  --color-text-primary: #111827;
+  --color-text-secondary: #4B5563;
+  --color-text-muted: #7B8190;
+  --color-text-placeholder: #9CA3AF;
+
+  /* Borders & Dividers */
+  --color-border: #E7EAF3;
+  --color-border-soft: #EEF2F7;
+  --color-divider: #F1F5F9;
+  --color-purple-bg: #F3F0FF;
+
+  /* Status */
+  --color-success: #22C55E;
+  --color-success-bg: #ECFDF3;
+  --color-warning: #F59E0B;
+  --color-warning-bg: #FFFBEB;
+  --color-error: #EF4444;
+  --color-error-bg: #FEF2F2;
+  --color-info: #3B82F6;
+  --color-info-bg: #EFF6FF;
+
+  /* Shadows */
+  --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+@layer base {
+  :root {
+    --background: #F5F7FB;
+    --foreground: #111827;
+  }
+
+  .dark {
+    --color-surface: #0F1420;
+    --color-card: #161D2D;
+    --color-secondary-surface: #1A2236;
+    --color-input: #111827;
+
+    --color-text-primary: #EDEDEE;
+    --color-text-secondary: #9CA3AF;
+    --color-text-muted: #6B7280;
+    --color-text-placeholder: #4B5563;
+
+    --color-border: #1E293B;
+    --color-border-soft: #1A2236;
+    --color-divider: #1A2236;
+    --color-purple-bg: #1E1548;
+
+    --color-success-bg: #052E16;
+    --color-warning-bg: #451A03;
+    --color-error-bg: #450A0A;
+    --color-info-bg: #0C1F3F;
+
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-text-primary);
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}

@@ -12,6 +12,7 @@ class Symbol(BaseModel):
 
 
 class FileNode(BaseModel):
+    id: str
     path: str
     language: str | None
     size: int
@@ -19,14 +20,26 @@ class FileNode(BaseModel):
     summary: str | None = None
 
 
+class FileAnalysisResponse(BaseModel):
+    id: str
+    path: str
+    language: str | None
+    size: int
+    summary: str | None = None
+    symbols: list[Symbol]
+    content: str
+
+
 class RepoResponse(BaseModel):
     id: str
     full_name: str
     status: str
     files: list[FileNode]
+    last_error: str | None = None
 
 
 class StatusResponse(BaseModel):
     id: str
     status: str
     files_count: int
+    last_error: str | None = None

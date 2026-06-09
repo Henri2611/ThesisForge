@@ -14,6 +14,7 @@ class GitHubClient:
         self._client = httpx.AsyncClient(
             base_url="https://api.github.com",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+            timeout=30.0,
         )
 
     async def get_user(self) -> dict[str, Any]:
@@ -47,13 +48,24 @@ class GitHubClient:
         url = f"/repos/{owner}/{name}/contents/{path}"
         resp = await self._client.get(url)
         if resp.status_code == 403:
-            return []
+            try:
+                body = resp.json()
+                msg = body.get("message", "Forbidden")
+            except Exception:
+                msg = "Forbidden"
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("GitHub API 403 for %s/%s%s: %s", owner, name, f"/{path}" if path else "", msg)
+            raise Exception(f"GitHub API denied access to {owner}/{name}: {msg}")
         resp.raise_for_status()
         return resp.json()
 
     async def get_file_content(self, owner: str, name: str, path: str) -> str:
         url = f"/repos/{owner}/{name}/contents/{path}"
         resp = await self._client.get(url)
+        if resp.status_code == 403:
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("GitHub API 403 fetching %s/%s/%s", owner, name, path)
+            return ""
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, list):

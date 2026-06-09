@@ -1,7 +1,8 @@
+import hashlib
 import logging
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from services.github.client import GitHubClient
 from services.parsing.language_detector import detect_language
@@ -64,59 +65,87 @@ class IngestorService:
 
         return ""
 
+    async def _update_repo_status(self, repo_id, status: RepoStatus, error: str | None = None):
+        """Update repo status in a fresh session (handles stale connections)."""
+        try:
+            async with async_session_factory() as db:
+                result = await db.execute(select(Repository).where(Repository.id == repo_id))
+                repo = result.scalar_one_or_none()
+                if repo:
+                    repo.status = status
+                    if error:
+                        repo.last_error = error[:500]
+                    await db.commit()
+        except Exception as e:
+            logger.error(f"Failed to update repo {repo_id} status to {status}: {e}")
+
     async def ingest_repository(self, repo_id: str, github_token: str):
-        """
-        Background task to ingest a repository.
-        """
+        """Background task to ingest a repository."""
+        # Step 1: Fetch repo info and mark as indexing (short-lived sessions)
+        owner = None
+        name = None
         async with async_session_factory() as db:
-            # 1. Get the repository record
             result = await db.execute(select(Repository).where(Repository.id == repo_id))
             repo = result.scalar_one_or_none()
-            
             if not repo:
-                logger.error(f"Repository {repo_id} not found for background ingestion")
+                logger.error(f"Repository {repo_id} not found")
                 return
+            owner = repo.owner
+            name = repo.name
+            repo.status = RepoStatus.indexing
+            await db.commit()
 
+        # Step 2: Walk the repository (NO DB connection held during this long operation)
+        client = GitHubClient(github_token)
+        try:
+            raw_files = await client.walk_repo(owner, name)
+        except Exception as e:
+            logger.error(f"Error walking repo: {e}")
+            await self._update_repo_status(repo_id, RepoStatus.failed, str(e))
+            return
+        finally:
+            await client.close()
+
+        # Step 3: Process files with a fresh session after the walk
+        async with async_session_factory() as db:
             try:
-                # 2. Update status to indexing
-                repo.status = RepoStatus.indexing
-                await db.commit()
-
-                # 3. Walk the repository
-                client = GitHubClient(github_token)
-                try:
-                    raw_files = await client.walk_repo(repo.owner, repo.name)
-                except Exception as e:
-                    logger.error(f"Error walking repo {repo.full_name}: {e}")
-                    repo.status = RepoStatus.failed
-                    await db.commit()
+                result = await db.execute(select(Repository).where(Repository.id == repo_id))
+                repo = result.scalar_one_or_none()
+                if not repo:
+                    logger.error(f"Repository {repo_id} not found")
                     return
-                finally:
-                    await client.close()
 
-                # 4. Process and save files, symbols, and chunks
+                # Clear existing data
+                await db.execute(
+                    delete(ChunkModel).where(ChunkModel.repo_id == repo.id)
+                )
+                file_ids_subq = select(FileModel.id).where(FileModel.repo_id == repo.id)
+                await db.execute(
+                    delete(SymbolModel).where(SymbolModel.file_id.in_(file_ids_subq))
+                )
+                await db.execute(
+                    delete(FileModel).where(FileModel.repo_id == repo.id)
+                )
+
+                # Process and save files, symbols, and chunks
                 for rf in raw_files:
                     lang = detect_language(rf["path"])
-
-                    # Extract symbols using AST (needed before summary)
                     symbols_list = []
                     if lang:
                         symbols_list = self.parser.parse(rf["content"], lang)
 
-                    # Save File to DB with summary
                     file_summary = self._summarize_file(rf["content"], lang, symbols_list)
                     file_obj = FileModel(
                         repo_id=repo.id,
                         path=rf["path"],
-                        hash="hash_placeholder",
+                        hash=hashlib.sha256(rf["content"].encode("utf-8")).hexdigest(),
                         language=lang,
                         size=rf["size"],
                         content_summary=file_summary
                     )
                     db.add(file_obj)
-                    await db.flush() # Get file_obj.id
+                    await db.flush()
 
-                    # Save symbols
                     for s in symbols_list:
                         symbol_obj = SymbolModel(
                             file_id=file_obj.id,
@@ -126,28 +155,30 @@ class IngestorService:
                         )
                         db.add(symbol_obj)
 
-                    # Create semantic chunks
                     chunks = self.chunker.chunk_file(repo.id, file_obj.id, rf["content"], symbols_list)
                     if chunks:
-                        # Batch generate embeddings for chunks in this file
                         contents = [c.content for c in chunks]
                         try:
                             embeddings = await self.ai.get_embeddings(contents)
                             for i, chunk in enumerate(chunks):
                                 chunk.embedding = embeddings[i]
                                 db.add(chunk)
+                        except ValueError:
+                            for chunk in chunks:
+                                db.add(chunk)
                         except Exception as e:
                             logger.warning(f"Failed to generate embeddings for {rf['path']}: {e}")
-                            # Still save chunks without embeddings as fallback
                             for chunk in chunks:
                                 db.add(chunk)
 
-                # 5. Finalize
                 repo.status = RepoStatus.indexed
                 await db.commit()
-                logger.info(f"Successfully ingested repository {repo.full_name} with AST symbols and vector chunks")
+                logger.info(f"Successfully ingested repository {repo.full_name}")
 
             except Exception as e:
-                logger.error(f"Critical error during ingestion of {repo.full_name}: {e}")
-                repo.status = RepoStatus.failed
-                await db.commit()
+                logger.error(f"Critical error during ingestion: {e}")
+                await self._update_repo_status(repo_id, RepoStatus.failed, str(e))
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
